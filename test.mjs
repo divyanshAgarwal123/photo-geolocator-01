@@ -67,7 +67,7 @@ async function runAgent(base,entry='main.ts') {
 async function withServer(handler,fn) {
   const server=createServer(handler);
   server.listen(0,'127.0.0.1'); await once(server,'listening');
-  try { await fn(`http://127.0.0.1:${server.address().port}`); }
+  try { await fn('http://127.0.0.1:'+server.address().port); }
   finally { await new Promise(resolve=>server.close(resolve)); }
 }
 
@@ -105,6 +105,23 @@ test('already answered photos are not submitted twice',async()=>{
     res.end(JSON.stringify({photos:[{id:'p01',url:'/photos/p01.jpg',answered:true}]}));
   },async base=>assert.equal((await runAgent(base)).code,0));
   assert.deepEqual(routes,['/photos']);
+});
+
+test('a duplicate manifest is rejected before an answer batch is sent',async()=>{
+  let posted=false;
+  await withServer((req,res)=>{
+    if(req.url==='/photos') {
+      const photo={id:'p01',url:'/photos/p01.jpg',answered:false};
+      return res.end(JSON.stringify({photos:[photo,photo]}));
+    }
+    if(req.url==='/answers') posted=true;
+    res.end('bad JPEG');
+  },async base=>{
+    const result=await runAgent(base);
+    assert.equal(result.code,1);
+    assert.match(result.output,/duplicate photo identifier/);
+  });
+  assert.equal(posted,false);
 });
 
 test('a symlinked launcher executes the real entrypoint',async()=>{

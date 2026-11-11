@@ -109,11 +109,13 @@ export function locate(f: Features): Estimate {
   return {lat:15,lon:5,cue:'weak cues: geographic prior'};
 }
 
-export function estimate(jpeg: Uint8Array): Estimate { return locate(features(decodeJpeg(jpeg))); }
+export function estimate(jpeg: Uint8Array): Estimate {
+  return locate(features(decodeJpeg(jpeg)));
+}
 
 async function json(url: string, init?: RequestInit): Promise<any> {
   const response=await fetch(url,{...init,redirect:'error'});
-  if (!response.ok) throw new Error(`Task API returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error('Task API returned HTTP '+response.status);
   return response.json();
 }
 
@@ -126,30 +128,35 @@ export async function main(): Promise<void> {
   if (!Array.isArray(listed.photos) || listed.photos.length>25) throw new Error('invalid photo manifest');
   const photos=listed.photos.filter((p:any)=>!p.answered);
   const answers:{id:string;lat:number;lon:number}[]=[];
+  const seen=new Set<string>();
   for (const photo of photos) {
     if (typeof photo.id!=='string' || !/^p\d{2}$/.test(photo.id)) throw new Error('invalid photo identifier');
+    if (seen.has(photo.id)) throw new Error('duplicate photo identifier');
+    seen.add(photo.id);
     const url=new URL(photo.url,base);
-    if (url.origin!==base.origin || url.pathname!==`/photos/${photo.id}.jpg`) throw new Error('invalid photo URL');
+    if (url.origin!==base.origin || url.pathname!=='/photos/'+photo.id+'.jpg') throw new Error('invalid photo URL');
     const response=await fetch(url,{redirect:'error'});
-    if (!response.ok) throw new Error(`Photo API returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error('Photo API returned HTTP '+response.status);
     let guess:Estimate;
     try { guess=estimate(new Uint8Array(await response.arrayBuffer())); }
     catch (error) {
-      process.stderr.write(`decoder fallback for ${photo.id}: ${String(error)}\n`);
+      process.stderr.write('decoder fallback for '+photo.id+': '+String(error)+'\n');
       guess={lat:15,lon:5,cue:'unsupported image'};
     }
     answers.push({id:photo.id,lat:guess.lat,lon:guess.lon});
-    process.stdout.write(`${photo.id}: ${guess.cue}\n`);
+    process.stdout.write(photo.id+': '+guess.cue+'\n');
   }
   if (answers.length) {
-    const receipt=await json(new URL('/answers',base).href,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({answers})});
+    const receipt=await json(new URL('/answers',base).href,{
+      method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({answers}),
+    });
     if (!Array.isArray(receipt.accepted) || receipt.accepted.length!==answers.length
         || !answers.every(a=>receipt.accepted.includes(a.id))) throw new Error('answer receipt identifiers mismatch');
-    process.stdout.write(`Accepted ${answers.length} answers; model calls: 0.\n`);
+    process.stdout.write('Accepted '+answers.length+' answers; model calls: 0.\n');
   }
 }
 
 // The local harness stages /var paths that resolve to /private/var on macOS.
 if (process.argv[1] && import.meta.url===pathToFileURL(realpathSync(process.argv[1])).href) {
-  main().catch(error=>{process.stderr.write(`${String(error)}\n`);process.exitCode=1;});
+  main().catch(error=>{process.stderr.write(String(error)+'\n');process.exitCode=1;});
 }
